@@ -2,11 +2,17 @@ pipeline {
   agent any
 
   environment {
-    DEPLOY_DIR = "/opt/python-webapp"
+    // Deploy folder writable by Jenkins (no sudo needed)
+    DEPLOY_DIR = "/var/lib/jenkins/python-webapp"
     SERVICE    = "python-webapp"
   }
 
+  options {
+    timestamps()
+  }
+
   stages {
+
     stage('Checkout') {
       steps {
         checkout scm
@@ -39,10 +45,10 @@ pipeline {
           set -e
 
           echo "Deploying to ${DEPLOY_DIR}..."
-          sudo mkdir -p ${DEPLOY_DIR}
+          mkdir -p ${DEPLOY_DIR}
 
           # Copy code to deploy dir (exclude venv and git metadata)
-          sudo rsync -av --delete --exclude 'venv' --exclude '.git' ./ ${DEPLOY_DIR}/
+          rsync -av --delete --exclude 'venv' --exclude '.git' ./ ${DEPLOY_DIR}/
 
           echo "Installing dependencies in deploy location..."
           cd ${DEPLOY_DIR}
@@ -53,6 +59,7 @@ pipeline {
 
           echo "Restarting service..."
           sudo systemctl restart ${SERVICE}
+          sudo systemctl status ${SERVICE} --no-pager -l | head -n 20
         """
       }
     }
