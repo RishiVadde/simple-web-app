@@ -2,12 +2,15 @@ pipeline {
   agent any
 
   environment {
-    APP_NAME    = "python-webapp"
-    DEPLOY_DIR  = "/var/lib/jenkins/python-webapp"   // writable by Jenkins (no sudo)
-    PORT        = "5000"
-    ARTIFACT_ZIP = "dist/${APP_NAME}-${env.BUILD_NUMBER}.zip"
-    PID_FILE    = "${DEPLOY_DIR}/${APP_NAME}.pid"
-    LOG_FILE    = "${DEPLOY_DIR}/${APP_NAME}.log"
+    APP_NAME     = "python-webapp"
+    DEPLOY_DIR   = "/var/lib/jenkins/python-webapp"     // writable by Jenkins (no sudo)
+    PORT         = "5000"
+
+    // tar artifact name
+    ARTIFACT_TAR = "dist/${APP_NAME}-${env.BUILD_NUMBER}.tar.gz"
+
+    PID_FILE     = "${DEPLOY_DIR}/${APP_NAME}.pid"
+    LOG_FILE     = "${DEPLOY_DIR}/${APP_NAME}.log"
   }
 
   options {
@@ -40,26 +43,26 @@ pipeline {
       }
     }
 
-    stage('Package Artifact (zip)') {
+    stage('Package Artifact (tar.gz)') {
       steps {
-        sh '''
+        sh """
           rm -rf dist
           mkdir -p dist
 
-          # Zip the source code + requirements (exclude venv, git, caches)
-          zip -r "${ARTIFACT_ZIP}" . \
-            -x "venv/*" \
-            -x ".git/*" \
-            -x "__pycache__/*" \
-            -x "*.pyc" \
-            -x "dist/*"
-        '''
+          # Create tar.gz artifact excluding venv, git, caches, dist
+          tar --exclude='./venv' \
+              --exclude='./.git' \
+              --exclude='./__pycache__' \
+              --exclude='./dist' \
+              --exclude='*.pyc' \
+              -czf ${ARTIFACT_TAR} .
+        """
       }
     }
 
     stage('Archive Artifact') {
       steps {
-        archiveArtifacts artifacts: 'dist/*.zip', fingerprint: true
+        archiveArtifacts artifacts: 'dist/*.tar.gz', fingerprint: true
       }
     }
 
@@ -71,13 +74,13 @@ pipeline {
           echo "Preparing deploy folder: ${DEPLOY_DIR}"
           mkdir -p ${DEPLOY_DIR}
 
-          echo "Cleaning old app files (keep logs if you want)"
-          rm -rf ${DEPLOY_DIR}/app.py ${DEPLOY_DIR}/requirements.txt ${DEPLOY_DIR}/test_app.py ${DEPLOY_DIR}/venv || true
+          echo "Cleaning old app files (keeping logs/pid if present)..."
+          rm -rf ${DEPLOY_DIR}/* || true
 
-          echo "Unzipping artifact..."
-          unzip -o ${ARTIFACT_ZIP} -d ${DEPLOY_DIR}
+          echo "Extracting artifact..."
+          tar -xzf ${ARTIFACT_TAR} -C ${DEPLOY_DIR}
 
-          echo "Creating venv in deploy folder..."
+          echo "Creating venv + installing dependencies in deploy folder..."
           cd ${DEPLOY_DIR}
           python3 -m venv venv
           . venv/bin/activate
@@ -86,7 +89,7 @@ pipeline {
 
           echo "Restarting app (no systemd, no sudo)..."
 
-          # Stop old process if PID exists
+          # Stop old process (PID file)
           if [ -f "${PID_FILE}" ]; then
             OLD_PID=\$(cat "${PID_FILE}" || true)
             if [ -n "\${OLD_PID}" ] && ps -p "\${OLD_PID}" > /dev/null 2>&1; then
@@ -96,13 +99,13 @@ pipeline {
             fi
           fi
 
-          # Also stop any stray gunicorn running this app (optional safety)
+          # Optional safety: stop any gunicorn running app:app
           pkill -f "gunicorn.*app:app" || true
 
-          # Start new process
+          # Start new gunicorn
           nohup ${DEPLOY_DIR}/venv/bin/gunicorn -b 0.0.0.0:${PORT} app:app > ${LOG_FILE} 2>&1 &
-
           echo \$! > ${PID_FILE}
+
           echo "Started new PID: \$(cat ${PID_FILE})"
           sleep 2
         """
