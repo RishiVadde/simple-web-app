@@ -43,7 +43,7 @@ pipeline {
       }
     }
 
-    stage('Package Artifact (tar.gz)') {
+    stage('Package Artifact') {
       steps {
         sh """
           rm -rf dist
@@ -67,49 +67,17 @@ pipeline {
     }
 
     stage('Deploy from Artifact (localhost)') {
+      
       steps {
-        sh """
-          set -e
-
-          echo "Preparing deploy folder: ${DEPLOY_DIR}"
-          mkdir -p ${DEPLOY_DIR}
-
-          echo "Cleaning old app files (keeping logs/pid if present)..."
-          rm -rf ${DEPLOY_DIR}/* || true
-
-          echo "Extracting artifact..."
-          tar -xzf ${ARTIFACT_TAR} -C ${DEPLOY_DIR}
-
-          echo "Creating venv + installing dependencies in deploy folder..."
-          cd ${DEPLOY_DIR}
-          python3 -m venv venv
-          . venv/bin/activate
-          pip install --upgrade pip
-          pip install -r requirements.txt
-
-          echo "Restarting app (no systemd, no sudo)..."
-
-          # Stop old process (PID file)
-          if [ -f "${PID_FILE}" ]; then
-            OLD_PID=\$(cat "${PID_FILE}" || true)
-            if [ -n "\${OLD_PID}" ] && ps -p "\${OLD_PID}" > /dev/null 2>&1; then
-              echo "Stopping old PID: \${OLD_PID}"
-              kill "\${OLD_PID}" || true
-              sleep 2
-            fi
-          fi
-
-          # Optional safety: stop any gunicorn running app:app
-          pkill -f "gunicorn.*app:app" || true
-
-          # Start new gunicorn
-          nohup ${DEPLOY_DIR}/venv/bin/gunicorn -b 0.0.0.0:${PORT} app:app > ${LOG_FILE} 2>&1 &
-          echo \$! > ${PID_FILE}
-
-          echo "Started new PID: \$(cat ${PID_FILE})"
-          sleep 2
-        """
+        publishHTML(target: [
+          reportDir: 'report',
+          reportFiles: 'index.html',
+          reportName: 'Hello from Jenkins (Styled)',
+          keepAll: true,
+          alwaysLinkToLastBuild: true
+          ])
       }
+
     }
 
     stage('Smoke Test') {
